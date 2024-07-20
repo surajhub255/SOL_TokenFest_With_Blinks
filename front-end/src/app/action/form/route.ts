@@ -9,7 +9,9 @@ import {
     PublicKey, 
     Transaction, 
     Keypair, 
-    sendAndConfirmTransaction 
+    LAMPORTS_PER_SOL, 
+    sendAndConfirmTransaction, 
+    TransactionConfirmationStrategy 
 } from "@solana/web3.js";
 import { 
     createMint, 
@@ -18,7 +20,7 @@ import {
     createAssociatedTokenAccountInstruction 
 } from "@solana/spl-token";
 
-const SOLANA_DEVNET_RPC_URL = "https://api.devnet.solana.com";
+const SOLANA_DEVNET_RPC_URL = "https://api.testnet.solana.com";
 
 export const GET = async (request: Request) => {
     const payload: ActionGetResponse = {
@@ -29,7 +31,7 @@ export const GET = async (request: Request) => {
         links: {
             actions: [
                 {
-                    href: new URL("/action/form", new URL(request.url).origin).toString(),
+                    href: new URL("/api/mint-nft", new URL(request.url).origin).toString(),  // Update with the correct endpoint
                     label: "Claim free NFT",
                 },
                 {
@@ -58,13 +60,20 @@ export const POST = async (req: Request) => {
 
         const connection = new Connection(SOLANA_DEVNET_RPC_URL);
         const payer = Keypair.generate();
+        console.log(payer)
 
-        // Airdrop SOL to the payer
-        const airdropSignature = await connection.requestAirdrop(
-            payer.publicKey,
-            2e9 // 2 SOL
-        );
-        await connection.confirmTransaction(airdropSignature);
+        // Airdrop SOL to the payer account to cover transaction fees
+        const airdropSignature = await connection.requestAirdrop(payer.publicKey, LAMPORTS_PER_SOL);
+        console.log(airdropSignature);
+        // Create a transaction confirmation strategy
+        const latestBlockhash = await connection.getLatestBlockhash();
+        const confirmStrategy: TransactionConfirmationStrategy = {
+            signature: airdropSignature,
+            blockhash: latestBlockhash.blockhash,
+            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+        };
+
+        await connection.confirmTransaction(confirmStrategy, "confirmed");
 
         // Create a new mint for the NFT
         const mint = await createMint(
@@ -95,9 +104,7 @@ export const POST = async (req: Request) => {
             const transaction = new Transaction()
                 .add(createAssociatedTokenAccountIx);
             transaction.feePayer = payer.publicKey;
-            transaction.recentBlockhash = (
-                await connection.getLatestBlockhash()
-            ).blockhash;
+            transaction.recentBlockhash = latestBlockhash.blockhash;
 
             // Sign the transaction
             transaction.sign(payer);
@@ -118,9 +125,7 @@ export const POST = async (req: Request) => {
         const mintTransaction = new Transaction()
             .add(mintToInstruction);
         mintTransaction.feePayer = payer.publicKey;
-        mintTransaction.recentBlockhash = (
-            await connection.getLatestBlockhash()
-        ).blockhash;
+        mintTransaction.recentBlockhash = latestBlockhash.blockhash;
 
         // Sign the transaction
         mintTransaction.sign(payer);
@@ -130,7 +135,7 @@ export const POST = async (req: Request) => {
         const encodedTransaction = Buffer.from(serializedTransaction).toString('base64');
 
         const payload: ActionPostResponse = {
-            transaction: encodedTransaction,
+            transaction: encodedTransaction,  // Pass the base64 encoded transaction here
             message: "NFT minted successfully :)",
         };
 
@@ -138,7 +143,7 @@ export const POST = async (req: Request) => {
             headers: ACTIONS_CORS_HEADERS,
         });
     } catch (err) {
-        console.error(err);
+        console.error(err); // Log the error to the console for debugging
 
         let message = err;
         return new Response(JSON.stringify({ error: { message } }), {
