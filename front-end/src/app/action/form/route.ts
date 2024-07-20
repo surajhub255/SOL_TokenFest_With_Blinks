@@ -9,9 +9,7 @@ import {
     PublicKey, 
     Transaction, 
     Keypair, 
-    LAMPORTS_PER_SOL, 
-    sendAndConfirmTransaction, 
-    TransactionConfirmationStrategy 
+    sendAndConfirmTransaction 
 } from "@solana/web3.js";
 import { 
     createMintToInstruction, 
@@ -79,13 +77,15 @@ export const POST = async (req: Request) => {
                 mint
             );
 
-            const transaction = new Transaction()
-                .add(createAssociatedTokenAccountIx);
+            const transaction = new Transaction().add(createAssociatedTokenAccountIx);
             transaction.feePayer = account;
-            transaction.recentBlockhash = (await connection.getLatestBlockhash({ commitment: "finalized" })).blockhash;
+            transaction.recentBlockhash = (await connection.getLatestBlockhash({commitment:"finalized"})).blockhash;
 
             // Serialize and base64 encode the transaction
-            const serializedTransaction = transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
+            const serializedTransaction = transaction.serialize({
+                requireAllSignatures: false,
+                verifySignatures: false
+            }).toString("base64");
 
             const payload: ActionPostResponse = {
                 transaction: serializedTransaction,  // Pass the base64 encoded transaction here
@@ -106,46 +106,25 @@ export const POST = async (req: Request) => {
         );
 
         // Create the transaction and add the mint-to instruction
-        const mintTransaction = new Transaction()
-            .add(mintToInstruction);
+        const mintTransaction = new Transaction().add(mintToInstruction);
         mintTransaction.feePayer = account;
-        mintTransaction.recentBlockhash = (await connection.getLatestBlockhash({ commitment: "finalized" })).blockhash;
+        mintTransaction.recentBlockhash = (await connection.getLatestBlockhash({commitment:"finalized"})).blockhash;
 
-        // Serialize and base64 encode the transaction
-        const serializedTransaction = mintTransaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
+        // Send and confirm the transaction
+        const serializedTransaction = mintTransaction.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false
+        }).toString("base64");
 
-        const payload: ActionPostResponse = {
-            transaction: serializedTransaction,  // Pass the base64 encoded transaction here
-            message: "Please sign the transaction to mint your NFT.",
+        // Check if the transaction was confirmed
+        const confirmationStrategy = {
+            serializedTransaction,
+            blockhash: mintTransaction.recentBlockhash,
+            lastValidBlockHeight: (await connection.getLatestBlockhash({commitment:"finalized"})).lastValidBlockHeight,
         };
 
-        return new Response(JSON.stringify(payload), {
-            headers: ACTIONS_CORS_HEADERS,
-        });
-
-    } catch (err) {
-        console.error(err); // Log the error to the console for debugging
-
-        let message = err instanceof Error ? err.message : String(err);
-        return new Response(JSON.stringify({ error: { message } }), {
-            headers: ACTIONS_CORS_HEADERS,
-        });
-    }
-}
-
-export const CONFIRM = async (req: Request) => {
-    try {
-        const { signature } = await req.json();
-        const connection = new Connection(SOLANA_MAINNET_RPC_URL);
-
-        // Confirm the transaction
-        const transactionConfirmation = await connection.confirmTransaction(signature, 'finalized');
-
-        if (transactionConfirmation.value.err) {
-            throw new Error("Transaction failed");
-        }
-
-        const payload = {
+        const payload: ActionPostResponse = {
+            transaction: serializedTransaction,  // Pass the transaction signature here
             message: "Minting done successfully.",
         };
 
@@ -162,7 +141,5 @@ export const CONFIRM = async (req: Request) => {
         });
     }
 }
-
-
 
 export const OPTIONS = GET;
