@@ -4,7 +4,7 @@ export async function GET(request: Request) {
 
     const payload: ActionGetResponse = {
 
-        icon: new URL("/nav.png", new URL(request.url).origin).toString(),
+        icon: new URL("/build.png", new URL(request.url).origin).toString(),
         title: "TokenFest",
         description: "Create a proposal with Blinks",
         label: "Create a proposal",
