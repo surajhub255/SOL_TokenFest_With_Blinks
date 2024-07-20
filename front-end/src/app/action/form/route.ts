@@ -14,13 +14,13 @@ import {
     TransactionConfirmationStrategy 
 } from "@solana/web3.js";
 import { 
-    createMint, 
     createMintToInstruction, 
     getAssociatedTokenAddress, 
     createAssociatedTokenAccountInstruction 
 } from "@solana/spl-token";
 
-const SOLANA_DEVNET_RPC_URL = "https://api.testnet.solana.com";
+const SOLANA_MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com";
+const EXISTING_MINT_ADDRESS = "ECba6s4MnqD6dF7U42Grj5HvStwyC5FhjxciXMe59ih2"; // Existing NFT mint address
 
 export const GET = async (request: Request) => {
     const payload: ActionGetResponse = {
@@ -31,7 +31,7 @@ export const GET = async (request: Request) => {
         links: {
             actions: [
                 {
-                    href: new URL("/api/mint-nft", new URL(request.url).origin).toString(),  // Update with the correct endpoint
+                    href: new URL("/action/form", new URL(request.url).origin).toString(),  // Update with the correct endpoint
                     label: "Claim free NFT",
                 },
                 {
@@ -58,31 +58,9 @@ export const POST = async (req: Request) => {
             throw new Error("Invalid 'account' provided. It's not a real pubkey");
         }
 
-        const connection = new Connection(SOLANA_DEVNET_RPC_URL);
-        const payer = Keypair.generate();
-        console.log(payer)
+        const connection = new Connection(SOLANA_MAINNET_RPC_URL);
 
-        // Airdrop SOL to the payer account to cover transaction fees
-        const airdropSignature = await connection.requestAirdrop(payer.publicKey, LAMPORTS_PER_SOL);
-        console.log(airdropSignature);
-        // Create a transaction confirmation strategy
-        const latestBlockhash = await connection.getLatestBlockhash();
-        const confirmStrategy: TransactionConfirmationStrategy = {
-            signature: airdropSignature,
-            blockhash: latestBlockhash.blockhash,
-            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-        };
-
-        await connection.confirmTransaction(confirmStrategy, "confirmed");
-
-        // Create a new mint for the NFT
-        const mint = await createMint(
-            connection,
-            payer,
-            payer.publicKey, // Mint authority
-            payer.publicKey, // Freeze authority
-            0 
-        );
+        const mint = new PublicKey(EXISTING_MINT_ADDRESS);
 
         // Get or create an associated token account for the NFT
         const associatedTokenAccount = await getAssociatedTokenAddress(
@@ -95,7 +73,7 @@ export const POST = async (req: Request) => {
         if (!tokenAccountInfo) {
             // Create the associated token account if it doesn't exist
             const createAssociatedTokenAccountIx = createAssociatedTokenAccountInstruction(
-                payer.publicKey,
+                account, // Fee payer (user's account)
                 associatedTokenAccount,
                 account,
                 mint
@@ -103,53 +81,88 @@ export const POST = async (req: Request) => {
 
             const transaction = new Transaction()
                 .add(createAssociatedTokenAccountIx);
-            transaction.feePayer = payer.publicKey;
-            transaction.recentBlockhash = latestBlockhash.blockhash;
+            transaction.feePayer = account;
+            transaction.recentBlockhash = (await connection.getLatestBlockhash({ commitment: "finalized" })).blockhash;
 
-            // Sign the transaction
-            transaction.sign(payer);
+            // Serialize and base64 encode the transaction
+            const serializedTransaction = transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
 
-            // Send and confirm the transaction
-            await sendAndConfirmTransaction(connection, transaction, [payer], { skipPreflight: false, preflightCommitment: "confirmed" });
+            const payload: ActionPostResponse = {
+                transaction: serializedTransaction,  // Pass the base64 encoded transaction here
+                message: "Please sign the transaction to create an associated token account.",
+            };
+
+            return new Response(JSON.stringify(payload), {
+                headers: ACTIONS_CORS_HEADERS,
+            });
         }
 
         // Create the mint-to instruction to mint one NFT to the associated token account
         const mintToInstruction = createMintToInstruction(
             mint,
             associatedTokenAccount,
-            payer.publicKey, // Mint authority
+            account, // Fee payer (user's account)
             1 // Amount
         );
 
         // Create the transaction and add the mint-to instruction
         const mintTransaction = new Transaction()
             .add(mintToInstruction);
-        mintTransaction.feePayer = payer.publicKey;
-        mintTransaction.recentBlockhash = latestBlockhash.blockhash;
-
-        // Sign the transaction
-        mintTransaction.sign(payer);
+        mintTransaction.feePayer = account;
+        mintTransaction.recentBlockhash = (await connection.getLatestBlockhash({ commitment: "finalized" })).blockhash;
 
         // Serialize and base64 encode the transaction
-        const serializedTransaction = mintTransaction.serialize();
-        const encodedTransaction = Buffer.from(serializedTransaction).toString('base64');
+        const serializedTransaction = mintTransaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
 
         const payload: ActionPostResponse = {
-            transaction: encodedTransaction,  // Pass the base64 encoded transaction here
-            message: "NFT minted successfully :)",
+            transaction: serializedTransaction,  // Pass the base64 encoded transaction here
+            message: "Please sign the transaction to mint your NFT.",
         };
 
         return new Response(JSON.stringify(payload), {
             headers: ACTIONS_CORS_HEADERS,
         });
+
     } catch (err) {
         console.error(err); // Log the error to the console for debugging
 
-        let message = err;
+        let message = err instanceof Error ? err.message : String(err);
         return new Response(JSON.stringify({ error: { message } }), {
             headers: ACTIONS_CORS_HEADERS,
         });
     }
 }
+
+export const CONFIRM = async (req: Request) => {
+    try {
+        const { signature } = await req.json();
+        const connection = new Connection(SOLANA_MAINNET_RPC_URL);
+
+        // Confirm the transaction
+        const transactionConfirmation = await connection.confirmTransaction(signature, 'finalized');
+
+        if (transactionConfirmation.value.err) {
+            throw new Error("Transaction failed");
+        }
+
+        const payload = {
+            message: "Minting done successfully.",
+        };
+
+        return new Response(JSON.stringify(payload), {
+            headers: ACTIONS_CORS_HEADERS,
+        });
+
+    } catch (err) {
+        console.error(err); // Log the error to the console for debugging
+
+        let message = err instanceof Error ? err.message : String(err);
+        return new Response(JSON.stringify({ error: { message } }), {
+            headers: ACTIONS_CORS_HEADERS,
+        });
+    }
+}
+
+
 
 export const OPTIONS = GET;
